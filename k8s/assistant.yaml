@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: incident-assistant
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: incident-assistant
+  namespace: incident-assistant
+---
+# Read-only and limited to one namespace. There is no ClusterRole and no access to Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: incident-reader
+  namespace: incident-lab
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: incident-reader
+  namespace: incident-lab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: incident-reader
+subjects:
+  - kind: ServiceAccount
+    name: incident-assistant
+    namespace: incident-assistant
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incident-assistant
+  namespace: incident-assistant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: incident-assistant
+  template:
+    metadata:
+      labels:
+        app: incident-assistant
+    spec:
+      serviceAccountName: incident-assistant
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: incident-assistant:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ALLOWED_NAMESPACES
+              value: incident-lab
+          ports:
+            - name: http
+              containerPort: 8000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: incident-assistant
+  namespace: incident-assistant
+spec:
+  selector:
+    app: incident-assistant
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
